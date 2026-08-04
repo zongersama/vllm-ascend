@@ -11,6 +11,20 @@
 各入口表达同一套 MLA 前处理融合语义：下采样 → RMSNorm → 上采样 / RoPE → 写入 KV/KR Cache（及可选量化）。  
 底层算子名为 **MlaPrologV3**，权重 `weight_dq` / `weight_uq_qr` / `weight_dkv_kr` 需以 **FRACTAL_NZ** 格式传入。
 
+### 1.1 vllm-ascend 编译裁剪后的实际可用场景
+
+Host / aclnn / Torch 接口仍保持原算子完整参数面；为缩短编译时间，kernel 侧仅实例化业务使用模板
+（见 `op_kernel/mla_prolog_template_tiling_key.h` 的 `ASCENDC_TPL_SEL`）。  
+**当前编译产物实际可用的输入组合如下**（其它组合可能通过 host 校验，但会因 tiling key 无对应 kernel 而失败）：
+
+| 场景 | `cache_mode` | `weight_quant_mode` | `kv_cache_quant_mode` | `query_quant_mode` | 主要 dtype |
+| --- | --- | --- | --- | --- | --- |
+| BF16 非量化 | `PA_BSND` | `0` | `0` | `0` | `token_x`/`weights`/`kv`/`kr`/`query` = BF16 |
+| MXFP8 全量化 + KV 非量化 | `PA_BSND` | `3` | `0` | `0` | `token_x`/`weight_*` = FP8_E4M3；`kv`/`kr`/`query` = BF16；scale = FP8_E8M0 |
+| MXFP8 全量化 + KV per-tensor | `PA_BSND` | `3` | `1` | `1`（须与 kv 一致） | 上同，且 `kv_cache`/`query` = FP8_E4M3 |
+
+对应 kernel `QUANT_MODE`：`0` / `7` / `8`。
+
 ## 2. 公共参数与约束
 
 ### 2.0 形状符号
